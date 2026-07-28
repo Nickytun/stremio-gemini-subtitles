@@ -109,17 +109,17 @@
                                 <span>Google Translate</span>
                             </label>
                             <label class="provider-option">
-                                <input type="radio" name="translationProvider" value="deepl" />
-                                <span>DeepL</span>
-                            </label>
-                        </fieldset>
-                        <label id="deeplKeyField" class="deepl-key-field" hidden>
-                            <span>DeepL API key</span>
-                            <input id="deeplApiKey" name="deeplApiKey" type="password" autocomplete="off" />
-                            <a href="https://www.deepl.com/en/your-account/keys" target="_blank" rel="noreferrer">
-                                Get your API key here
-                            </a>
-                        </label>
+    <input type="radio" name="translationProvider" value="gemini" />
+    <span>Gemini</span>
+</label>
+</fieldset>
+<label id="geminiKeyField" class="gemini-key-field hidden">
+    <span>Gemini API key</span>
+    <input id="geminiApiKey" name="geminiApiKey" type="password" autocomplete="off" placeholder="Nhập Gemini API Key..." />
+    <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer">
+        Get your API key here
+    </a>
+</label>
                         <button type="submit">Install configured addon</button>
                     </form>
                     <p class="install-note">
