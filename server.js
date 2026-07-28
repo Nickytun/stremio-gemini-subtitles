@@ -22,13 +22,12 @@ const CONFIGURED_ROUTER_CACHE_MAX = DEFAULT_CONFIGURED_ROUTER_CACHE_MAX;
 const CONFIGURED_ROUTER_CACHE_TTL_SECONDS = DEFAULT_CONFIGURED_ROUTER_CACHE_TTL_SECONDS;
 
 function createApp() {
-    function createApp() {
   const app = express();
-  
-  // 1. Tin tưởng tuyệt đối Proxy của cả Vercel lẫn Render
+
+  // 1. Bật trust proxy chuẩn cho cả Vercel và Render
   app.set('trust proxy', true);
 
-  // 2. Xóa bỏ hoàn toàn header 'forwarded' gây lỗi ValidationError trên Vercel
+  // 2. Xóa header 'forwarded' để triệt hạ lỗi ValidationError
   app.use((req, res, next) => {
     delete req.headers['forwarded'];
     next();
@@ -42,6 +41,11 @@ function createApp() {
     ttl: CONFIGURED_ROUTER_CACHE_TTL_SECONDS * 1000,
     updateAgeOnGet: true,
   });
+
+  const rateLimiters = createRateLimiters();
+
+  return app;
+}
 
   // ĐÃ XÓA DÒNG GHI ĐỀ app.set('trust proxy', getTrustProxySetting()); Ở ĐÂY
     const rateLimiters = createRateLimiters();
