@@ -14,7 +14,7 @@ const { contentType, recordHttpRequest, renderMetrics } = require("./lib/metrics
 const { getDisplayBaseUrl, getListenHost, getTrustProxySetting } = require("./lib/public-url");
 const { createRateLimiters } = require("./lib/rate-limit");
 const { renderConfigPage } = require("./lib/web-page");
-const { getGeneratedSubtitleResponse } = require("./lib/subtitle-service");
+const { getGeneratedSubtitleResponse } = require("./subtitle-service");
 
 const DEFAULT_CONFIGURED_ROUTER_CACHE_MAX = 100;
 const DEFAULT_CONFIGURED_ROUTER_CACHE_TTL_SECONDS = 6 * 60 * 60;
