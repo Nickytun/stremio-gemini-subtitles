@@ -22,20 +22,28 @@ const CONFIGURED_ROUTER_CACHE_MAX = DEFAULT_CONFIGURED_ROUTER_CACHE_MAX;
 const CONFIGURED_ROUTER_CACHE_TTL_SECONDS = DEFAULT_CONFIGURED_ROUTER_CACHE_TTL_SECONDS;
 
 function createApp() {
-    const app = express();
-    app.set('trust proxy', true);
-    app.use((req, res, next) => { req.headers['x-forwarded-proto'] = 'https'; req.headers.host = 'stremio-one-subtitles.onrender.com'; next(); });
-    const imgDir = path.join(__dirname, "img");
-    const publicDir = path.join(__dirname, "assets");
-    const webDir = path.join(__dirname, "web");
-    const configuredRouters = new LRUCache({
-        max: CONFIGURED_ROUTER_CACHE_MAX,
-        ttl: CONFIGURED_ROUTER_CACHE_TTL_SECONDS * 1000,
-        updateAgeOnGet: true,
-    });
+    function createApp() {
+  const app = express();
+  
+  // 1. Tin tưởng tuyệt đối Proxy của cả Vercel lẫn Render
+  app.set('trust proxy', true);
 
-    app.set("trust proxy", getTrustProxySetting());
+  // 2. Xóa bỏ hoàn toàn header 'forwarded' gây lỗi ValidationError trên Vercel
+  app.use((req, res, next) => {
+    delete req.headers['forwarded'];
+    next();
+  });
 
+  const imgDir = path.join(__dirname, "img");
+  const publicDir = path.join(__dirname, "assets");
+  const webDir = path.join(__dirname, "web");
+  const configuredRouters = new LRUCache({
+    max: CONFIGURED_ROUTER_CACHE_MAX,
+    ttl: CONFIGURED_ROUTER_CACHE_TTL_SECONDS * 1000,
+    updateAgeOnGet: true,
+  });
+
+  // ĐÃ XÓA DÒNG GHI ĐỀ app.set('trust proxy', getTrustProxySetting()); Ở ĐÂY
     const rateLimiters = createRateLimiters();
 
     app.use(logRequest);
