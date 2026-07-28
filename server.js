@@ -154,7 +154,6 @@ function createApp() {
             statusCode: error.statusCode || 500,
         });
         res.status(error.statusCode || 500).json({ error: error.message || "Server error" });
-    });
 
     return app;
 }
