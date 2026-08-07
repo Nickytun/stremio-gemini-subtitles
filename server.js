@@ -23,7 +23,8 @@ const CONFIGURED_ROUTER_CACHE_TTL_SECONDS = DEFAULT_CONFIGURED_ROUTER_CACHE_TTL_
 
 function createApp() {
     const app = express();
-    app.use((req, res, next) => { req.headers['x-forwarded-proto'] = 'https'; req.headers.host = 'stremio-one-subtitles.onrender.com'; next(); });
+    app.set('trust proxy', true);
+    app.use((req, res, next) => { req.headers['x-forwarded-proto'] = 'https'; req.headers.host = 'stremio-gemini-subtitles.onrender.com'; next(); });
     const imgDir = path.join(__dirname, "img");
     const publicDir = path.join(__dirname, "assets");
     const webDir = path.join(__dirname, "web");
