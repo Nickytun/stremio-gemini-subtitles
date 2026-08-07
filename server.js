@@ -11,8 +11,7 @@ const { createAddonInterface } = require("./addon");
 const { composeDiagnosticVtt, parseDiagnosticSubtitlePayload } = require("./lib/diagnostic-subtitle");
 const logger = require("./lib/logger");
 const { contentType, recordHttpRequest, renderMetrics } = require("./lib/metrics");
-const { getDisplayBaseUrl, getListenHost, getTrustProxySetting } = require("./lib/public-url");
-const { createRateLimiters } = require("./lib/rate-limit");
+const { getDisplayBaseUrl, getListenHost } = require("./lib/public-url");
 const { renderConfigPage } = require("./lib/web-page");
 const { getGeneratedSubtitleResponse } = require("./subtitle-service");
 
@@ -34,12 +33,8 @@ function createApp() {
         updateAgeOnGet: true,
     });
 
-    app.set("trust proxy", getTrustProxySetting());
-
-    const rateLimiters = createRateLimiters();
-
-    // app.use(logRequest);
-    // app.use((req, res, next) => {
+    app.use(logRequest);
+    app.use((req, res, next) => {
         res.set("Access-Control-Allow-Origin", "*");
         res.set("Access-Control-Allow-Headers", "*");
         res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
@@ -51,8 +46,6 @@ function createApp() {
 
         next();
     });
-    app.use(rateLimiters.general);
-    app.use(rateLimiters.subtitleWork);
 
     app.use("/public", express.static(publicDir));
     app.use("/assets", express.static(webDir));
@@ -243,8 +236,7 @@ function decodeProviderKey(value) {
 
 if (require.main === module) {
     const app = createApp();
-    // Chỉnh lại Port động để tương thích hoàn toàn với nền tảng Render
-    const port = Number(process.env.PORT || 3000);
+    const port = Number(process.env.PORT || 10000);
     const server = app.listen(port, '0.0.0.0', () => {
         const baseUrl = getDisplayBaseUrl(server.address().port);
         logger.info("server started", {
