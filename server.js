@@ -243,12 +243,12 @@ function decodeProviderKey(value) {
 
 if (require.main === module) {
     const app = createApp();
-    const port = Number(process.env.PORT || 53100);
-    const host = getListenHost();
-    const server = app.listen(port, host, () => {
+    // Chỉnh lại Port động để tương thích hoàn toàn với nền tảng Render
+    const port = Number(process.env.PORT || 3000);
+    const server = app.listen(port, '0.0.0.0', () => {
         const baseUrl = getDisplayBaseUrl(server.address().port);
         logger.info("server started", {
-            host,
+            host: '0.0.0.0',
             baseUrl: baseUrl,
             port: server.address().port,
         });
