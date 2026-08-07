@@ -18,6 +18,7 @@ const { composeVtt, parseSubtitleCues } = require("./lib/subtitle-parser");
 const { searchPublicStremioOpenSubtitles } = require("./lib/stremio-subtitles");
 const { translateCues } = require("./lib/translator");
 const { translationProvider } = require("./lib/translator");
+
 const RESULT_LIMIT = Number(process.env.SUBTITLE_RESULT_LIMIT || 3);
 const GENERATED_SUBTITLE_CACHE_CONTROL = "public, max-age=86400";
 const DIAGNOSTIC_SUBTITLE_CACHE_CONTROL = "no-store";
@@ -25,6 +26,14 @@ const DEFAULT_JOB_MAX = 1000;
 const DEFAULT_JOB_TTL_SECONDS = 24 * 60 * 60;
 const JOB_MAX = DEFAULT_JOB_MAX;
 const JOB_TTL_SECONDS = DEFAULT_JOB_TTL_SECONDS;
+
+// KHAI BÁO MẢNG CHỨA CÁC API KEY GEMINI CỦA ÔNG Ở ĐÂY
+const GEMINI_API_KEYS = [
+    "KEY_SO_1_CUA_ONG",
+    "KEY_SO_2_CUA_ONG",
+    "KEY_SO_3_CUA_ONG"
+];
+
 const jobs = new LRUCache({
     max: JOB_MAX,
     ttl: JOB_TTL_SECONDS * 1000,
@@ -41,7 +50,6 @@ async function getSubtitleOptions(args) {
     });
 
     try {
-// Ép OpenSubtitles v3 trả về sub của cả Tiếng Anh, Trung, Hàn, Đức, Nhật...
         const modifiedArgs = {
             ...args,
             config: {
@@ -57,7 +65,6 @@ async function getSubtitleOptions(args) {
 
         const results = await searchPublicStremioOpenSubtitles(modifiedArgs);
 
-        // 1. Chỉ lọc lấy những sub khớp đúng ngôn ngữ nguồn đã chọn (Ví dụ: 'en' thì chỉ lấy sub Anh)
         const targetSourceLang = normalizeStremioLanguage(config.sourceLanguage || 'en').toLowerCase();
 
         const matchingSubtitles = results.filter(sub => {
@@ -69,11 +76,11 @@ async function getSubtitleOptions(args) {
             return subLang === targetSourceLang;
         });
 
-        // 2. Lấy tối đa 5 sub ĐÚNG CHUẨN ngôn ngữ nguồn đó
         const sourceLanguageSubtitles = matchingSubtitles.slice(0, 5).map(sub => ({
             ...sub,
             sourceLanguage: normalizeStremioLanguage(sub.lang || config.sourceLanguage)
         }));
+        
         recordSubtitleCandidates({
             count: results.length,
             sourceLanguage: config.sourceLanguage,
@@ -88,7 +95,7 @@ async function getSubtitleOptions(args) {
             targetLanguage: config.targetLanguage,
             type: args.type,
         });
-        // Tạo options sub với sourceLanguage lấy động từ từng file sub thay vì config cố định
+        
         const subtitles = sourceLanguageSubtitles.flatMap(sub => {
             const dynamicConfig = {
                 ...config,
@@ -96,6 +103,7 @@ async function getSubtitleOptions(args) {
             };
             return createSubtitleOptions(args, results, [sub], dynamicConfig);
         });
+        
         recordSubtitleLookup({
             sourceLanguage: config.sourceLanguage,
             status: "success",
@@ -341,8 +349,16 @@ async function buildTranslatedVtt(job) {
         provider: translationProvider(config),
     });
     try {
-        const translations = await translateCues(cues, config);
+        // LOGIC TÁCH 5 PHÚT ĐẦU (300,000 ms) - Chuẩn bị sẵn chờ file translator.js
+        const FIVE_MINS_MS = 5 * 60 * 1000;
+        const first5MinsCues = cues.filter(c => c.type === 'cue' && c.data.start <= FIVE_MINS_MS);
+        const restCues = cues.filter(c => c.type === 'cue' && c.data.start > FIVE_MINS_MS);
+        const nonCues = cues.filter(c => c.type !== 'cue'); // Các thẻ style, header gốc
+
+        // Tạm thời truyền danh sách Key vào thẳng hàm dịch (cần update bên translator.js để nhận)
+        const translations = await translateCues(cues, config, GEMINI_API_KEYS);
         const vtt = composeVtt(cues, translations);
+        
         recordSubtitleTranslation({
             bytes: Buffer.byteLength(vtt, "utf8"),
             durationSeconds: Number(process.hrtime.bigint() - startedAt) / 1_000_000_000,
