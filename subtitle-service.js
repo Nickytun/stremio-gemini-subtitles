@@ -29,15 +29,9 @@ const JOB_TTL_SECONDS = DEFAULT_JOB_TTL_SECONDS;
 
 // KHAI BÁO MẢNG CHỨA CÁC API KEY GEMINI CỦA ÔNG Ở ĐÂY
 const GEMINI_API_KEYS = [
-    "AIzaSyCdfbKv5o92Grr25LlPc68CyRYLj0alvLg",
-    "AIzaSyCtA0zTe1udpJoDSnJL0V64P_cAxWV76sk",
-    "AIzaSyANZDfp-r6HTZ9BurU5rVj039DszXvc7d0",
-    "AIzaSyAWdfjX2ko6bW3s85CiIU-SBc7aee76Fww",
-    "AIzaSyD1ocTmVK2UU3kKRgxlOFWH8XQKE_cH_Hc",
-    "AIzaSyBXGWwRXriaV3FMQlX4-JIu8Mwqc0RSoSM",
-    "AIzaSyCRYuopNPssfsCoSJQOF26ozeq-NV2cEI8",
-    "AIzaSyCFvQtAeg2n_Oo5Q-5h164DMOC3S5w_t7o",
-    "AIzaSyAR1oXg0xruyOxAblgdPAo1Z5A5WTjRyhc"
+    "KEY_SO_1_CUA_ONG",
+    "KEY_SO_2_CUA_ONG",
+    "KEY_SO_3_CUA_ONG"
 ];
 
 const jobs = new LRUCache({
@@ -56,33 +50,10 @@ async function getSubtitleOptions(args) {
     });
 
     try {
-        const modifiedArgs = {
-            ...args,
-            config: {
-                ...args.config,
-                sourceLanguage: 'all',
-                stremioSourceLanguage: 'all'
-            },
-            extra: {
-                ...(args.extra || {}),
-                sublanguageid: 'eng,kor,zho,chi,deu,jpn,fre,spa'
-            }
-        };
+        // Lấy trực tiếp từ OpenSubtitles theo đúng yêu cầu của Stremio mà không bị bóp méo ngôn ngữ
+        const results = await searchPublicStremioOpenSubtitles(args);
 
-        const results = await searchPublicStremioOpenSubtitles(modifiedArgs);
-
-        const targetSourceLang = normalizeStremioLanguage(config.sourceLanguage || 'en').toLowerCase();
-
-        const matchingSubtitles = results.filter(sub => {
-            const subLang = normalizeStremioLanguage(sub.lang || '').toLowerCase();
-            if (targetSourceLang === 'all') return true;
-            if (targetSourceLang === 'en' || targetSourceLang === 'eng') {
-                return subLang === 'en' || subLang === 'eng';
-            }
-            return subLang === targetSourceLang;
-        });
-
-        const sourceLanguageSubtitles = matchingSubtitles.slice(0, 5).map(sub => ({
+        const sourceLanguageSubtitles = results.slice(0, 5).map(sub => ({
             ...sub,
             sourceLanguage: normalizeStremioLanguage(sub.lang || config.sourceLanguage)
         }));
@@ -355,13 +326,6 @@ async function buildTranslatedVtt(job) {
         provider: translationProvider(config),
     });
     try {
-        // LOGIC TÁCH 5 PHÚT ĐẦU (300,000 ms) - Chuẩn bị sẵn chờ file translator.js
-        const FIVE_MINS_MS = 5 * 60 * 1000;
-        const first5MinsCues = cues.filter(c => c.type === 'cue' && c.data.start <= FIVE_MINS_MS);
-        const restCues = cues.filter(c => c.type === 'cue' && c.data.start > FIVE_MINS_MS);
-        const nonCues = cues.filter(c => c.type !== 'cue'); // Các thẻ style, header gốc
-
-        // Tạm thời truyền danh sách Key vào thẳng hàm dịch (cần update bên translator.js để nhận)
         const translations = await translateCues(cues, config, GEMINI_API_KEYS);
         const vtt = composeVtt(cues, translations);
         
