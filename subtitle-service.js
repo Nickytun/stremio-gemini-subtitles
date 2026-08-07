@@ -29,9 +29,9 @@ const JOB_TTL_SECONDS = DEFAULT_JOB_TTL_SECONDS;
 
 // KHAI BÁO MẢNG CHỨA CÁC API KEY GEMINI CỦA ÔNG Ở ĐÂY
 const GEMINI_API_KEYS = [
-    "KEY_SO_1_CUA_ONG",
-    "KEY_SO_2_CUA_ONG",
-    "KEY_SO_3_CUA_ONG"
+    "AIzaSyCdfbKv5o92Grr25LlPc68CyRYLj0alvLg",
+    "AIzaSyCtA0zTe1udpJoDSnJL0V64P_cAxWV76sk",
+    "AIzaSyANZDfp-r6HTZ9BurU5rVj039DszXvc7d0"
 ];
 
 const jobs = new LRUCache({
