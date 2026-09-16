@@ -184,11 +184,11 @@ legend {
     padding: 0;
 }
 
-.deepl-key-field[hidden] {
+.gemini-key-field[hidden] {
     display: none;
 }
 
-.deepl-key-field a {
+.gemini-key-field a {
     color: #c8d2ff;
     font-size: 13px;
     font-weight: 500;
