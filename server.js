@@ -11,19 +11,19 @@ const { createAddonInterface } = require("./addon");
 const { composeDiagnosticVtt, parseDiagnosticSubtitlePayload } = require("./lib/diagnostic-subtitle");
 const logger = require("./lib/logger");
 const { contentType, recordHttpRequest, renderMetrics } = require("./lib/metrics");
-const { getDisplayBaseUrl, getListenHost } = require("./lib/public-url");
+const { getDisplayBaseUrl } = require("./lib/public-url");
 const { renderConfigPage } = require("./lib/web-page");
 const { getGeneratedSubtitleResponse } = require("./subtitle-service");
 
-const DEFAULT_CONFIGURED_ROUTER_CACHE_MAX = 100;
-const DEFAULT_CONFIGURED_ROUTER_CACHE_TTL_SECONDS = 6 * 60 * 60;
-const CONFIGURED_ROUTER_CACHE_MAX = DEFAULT_CONFIGURED_ROUTER_CACHE_MAX;
-const CONFIGURED_ROUTER_CACHE_TTL_SECONDS = DEFAULT_CONFIGURED_ROUTER_CACHE_TTL_SECONDS;
+const CONFIGURED_ROUTER_CACHE_MAX = 100;
+const CONFIGURED_ROUTER_CACHE_TTL_SECONDS = 6 * 60 * 60;
+const PROVIDERS = new Set(["gemini", "googletrans", "deepl"]);
+const RESERVED_SEGMENTS = new Set(["manifest.json", "subtitles", "configure", "catalog", "meta", "stream"]);
 
 function createApp() {
     const app = express();
-    app.set('trust proxy', true);
-    app.use((req, res, next) => { req.headers['x-forwarded-proto'] = 'https'; req.headers.host = 'stremio-gemini-subtitles.onrender.com'; next(); });
+    app.set("trust proxy", true);
+
     const imgDir = path.join(__dirname, "img");
     const publicDir = path.join(__dirname, "assets");
     const webDir = path.join(__dirname, "web");
@@ -59,12 +59,14 @@ function createApp() {
         res.redirect("/");
     });
 
-    app.get("/configure/:sourceLang/:targetLang/configure", (req, res) => {
-        res.redirect("/");
-    });
-
-    app.get("/configure/:sourceLang/:targetLang/:translationProvider/:deeplApiKey/configure", (req, res) => {
-        res.redirect("/");
+    app.get("/health", (req, res) => {
+        res.json({
+            geminiKeysConfigured: String(process.env.GEMINI_KEYS || process.env.GEMINI_API_KEY || "")
+                .split(",")
+                .map((key) => key.trim())
+                .filter(Boolean).length,
+            ok: true,
+        });
     });
 
     app.get("/metrics", async (req, res, next) => {
@@ -103,20 +105,41 @@ function createApp() {
         }
     });
 
-    app.use("/configure/:sourceLang/:targetLang/:translationProvider/:deeplApiKey", (req, res, next) => {
-        getConfiguredRouter(configuredRouters, {
-            deeplApiKey: decodeProviderKey(req.params.deeplApiKey),
-            sourceLang: req.params.sourceLang,
-            targetLang: req.params.targetLang,
-            translationProvider: req.params.translationProvider,
-        })(req, res, next);
-    });
-
+    // Chấp nhận mọi dạng URL cấu hình:
+    //   /configure/:src/:tgt/manifest.json
+    //   /configure/:src/:tgt/gemini/manifest.json
+    //   /configure/:src/:tgt/gemini/:base64Key/manifest.json
     app.use("/configure/:sourceLang/:targetLang", (req, res, next) => {
+        const [pathname, query] = req.url.split("?");
+        const segments = pathname.split("/").filter(Boolean);
+
+        let consumed = 0;
+        let translationProvider = "gemini";
+        let providerKey = "";
+
+        if (segments[0] && PROVIDERS.has(segments[0].toLowerCase())) {
+            translationProvider = segments[0].toLowerCase();
+            consumed = 1;
+
+            if (segments[1] && !RESERVED_SEGMENTS.has(segments[1])) {
+                providerKey = safeDecodeProviderKey(segments[1]);
+                consumed = 2;
+            }
+        }
+
+        const rest = segments.slice(consumed);
+        if (rest[0] === "configure") {
+            res.redirect("/");
+            return;
+        }
+
+        req.url = `/${rest.join("/")}${query ? `?${query}` : ""}`;
+
         getConfiguredRouter(configuredRouters, {
+            providerKey,
             sourceLang: req.params.sourceLang,
             targetLang: req.params.targetLang,
-            translationProvider: "googletrans",
+            translationProvider,
         })(req, res, next);
     });
 
@@ -156,20 +179,20 @@ function routerCacheKey(config) {
 
 function logRequest(req, res, next) {
     const startedAt = process.hrtime.bigint();
+    const originalPath = req.path;
 
     res.on("finish", () => {
         const durationSeconds = Number(process.hrtime.bigint() - startedAt) / 1_000_000_000;
-        const route = routeLabel(req);
         recordHttpRequest({
             durationSeconds,
             method: req.method,
-            route,
+            route: routeLabel(originalPath),
             status: res.statusCode,
         });
         logger.info("http request", {
             durationMs: durationSeconds * 1000,
             method: req.method,
-            path: req.path,
+            path: originalPath,
             statusCode: res.statusCode,
         });
     });
@@ -177,19 +200,16 @@ function logRequest(req, res, next) {
     next();
 }
 
-function routeLabel(req) {
-    if (req.path === "/") return "/";
-    if (req.path === "/metrics") return "/metrics";
-    if (req.path.startsWith("/assets/")) return "/assets/*";
-    if (req.path.startsWith("/img/")) return "/img/*";
-    if (req.path.startsWith("/public/")) return "/public/*";
-    if (req.path.startsWith("/generated-subtitles/")) return "/generated-subtitles/:key.vtt";
-    if (req.path.startsWith("/diagnostic-subtitles/")) return "/diagnostic-subtitles/:payload.vtt";
-    if (/^\/configure\/[^/]+\/[^/]+\/subtitles\//.test(req.path)) {
-        return "/configure/:sourceLang/:targetLang/subtitles/*";
-    }
-    if (/^\/configure\/[^/]+\/[^/]+/.test(req.path)) return "/configure/:sourceLang/:targetLang/*";
-    if (req.path.startsWith("/subtitles/")) return "/subtitles/*";
+function routeLabel(pathname) {
+    if (pathname === "/") return "/";
+    if (pathname === "/metrics") return "/metrics";
+    if (pathname.startsWith("/assets/")) return "/assets/*";
+    if (pathname.startsWith("/img/")) return "/img/*";
+    if (pathname.startsWith("/public/")) return "/public/*";
+    if (pathname.startsWith("/generated-subtitles/")) return "/generated-subtitles/:key.vtt";
+    if (pathname.startsWith("/diagnostic-subtitles/")) return "/diagnostic-subtitles/:payload.vtt";
+    if (/^\/configure\/[^/]+\/[^/]+/.test(pathname)) return "/configure/:sourceLang/:targetLang/*";
+    if (pathname.startsWith("/subtitles/")) return "/subtitles/*";
     return "other";
 }
 
@@ -200,6 +220,7 @@ function isMetricsRequestAuthorized(req) {
 }
 
 function isMetricsRequestAllowed(req) {
+    if (process.env.METRICS_TOKEN) return true;
     return clientAddresses(req).some(isPrivateAddress);
 }
 
@@ -234,14 +255,21 @@ function decodeProviderKey(value) {
     return Buffer.from(String(value).replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
 }
 
+function safeDecodeProviderKey(value) {
+    try {
+        return decodeProviderKey(value);
+    } catch {
+        return "";
+    }
+}
+
 if (require.main === module) {
     const app = createApp();
     const port = Number(process.env.PORT || 10000);
-    const server = app.listen(port, '0.0.0.0', () => {
-        const baseUrl = getDisplayBaseUrl(server.address().port);
+    const server = app.listen(port, "0.0.0.0", () => {
         logger.info("server started", {
-            host: '0.0.0.0',
-            baseUrl: baseUrl,
+            baseUrl: getDisplayBaseUrl(server.address().port),
+            host: "0.0.0.0",
             port: server.address().port,
         });
     });
