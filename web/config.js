@@ -1,17 +1,23 @@
 const form = document.getElementById("configForm");
 const source = document.getElementById("sourceLang");
 const target = document.getElementById("targetLang");
-const deeplApiKey = document.getElementById("deeplApiKey");
-const deeplKeyField = document.getElementById("deeplKeyField");
+const geminiApiKey = document.getElementById("geminiApiKey");
+const geminiKeyField = document.getElementById("geminiKeyField");
 const copyButton = document.getElementById("copyManifest");
 const openStremioWebButton = document.getElementById("openStremioWeb");
 const copyStatus = document.getElementById("copyStatus");
 
 function manifestUrl() {
     const baseUrl = `${location.origin}/configure/${encodeURIComponent(source.value)}/${encodeURIComponent(target.value)}`;
-    if (selectedProvider() !== "deepl") return `${baseUrl}/manifest.json`;
+    const provider = selectedProvider();
 
-    return `${baseUrl}/deepl/${encodeProviderKey(deeplApiKey.value.trim())}/manifest.json`;
+    if (provider !== "gemini") return `${baseUrl}/${provider}/manifest.json`;
+
+    const key = geminiApiKey.value.trim();
+    // Không nhập key ở đây thì server sẽ dùng GEMINI_KEYS trong biến môi trường.
+    if (!key) return `${baseUrl}/gemini/manifest.json`;
+
+    return `${baseUrl}/gemini/${encodeProviderKey(key)}/manifest.json`;
 }
 
 function stremioWebUrl() {
@@ -19,7 +25,7 @@ function stremioWebUrl() {
 }
 
 function updateView() {
-    deeplKeyField.hidden = selectedProvider() !== "deepl";
+    geminiKeyField.hidden = selectedProvider() !== "gemini";
     copyStatus.textContent = "";
 }
 
@@ -35,9 +41,9 @@ copyButton.addEventListener("click", async () => {
 
     try {
         await copyText(manifestUrl());
-        copyStatus.textContent = "Copied";
+        copyStatus.textContent = "Đã copy";
     } catch {
-        copyStatus.textContent = "Copy failed";
+        copyStatus.textContent = "Copy thất bại";
     }
 });
 
@@ -49,14 +55,15 @@ openStremioWebButton.addEventListener("click", () => {
 
 source.addEventListener("change", updateView);
 target.addEventListener("change", updateView);
-deeplApiKey.addEventListener("input", updateView);
+geminiApiKey.addEventListener("input", updateView);
 document.querySelectorAll("input[name='translationProvider']").forEach((input) => {
     input.addEventListener("change", updateView);
 });
 updateView();
 
 function selectedProvider() {
-    return document.querySelector("input[name='translationProvider']:checked").value;
+    const checked = document.querySelector("input[name='translationProvider']:checked");
+    return checked ? checked.value : "gemini";
 }
 
 function encodeProviderKey(value) {
@@ -65,12 +72,7 @@ function encodeProviderKey(value) {
 
 function validateConfig() {
     if (source.value === target.value) {
-        copyStatus.textContent = "Choose different source and target languages";
-        return false;
-    }
-
-    if (selectedProvider() === "deepl" && !deeplApiKey.value.trim()) {
-        copyStatus.textContent = "Enter DeepL API key";
+        copyStatus.textContent = "Chọn ngôn ngữ nguồn khác ngôn ngữ đích";
         return false;
     }
 
@@ -82,4 +84,6 @@ async function copyText(value) {
         await navigator.clipboard.writeText(value);
         return;
     }
+
+    throw new Error("Clipboard không khả dụng");
 }
