@@ -14,13 +14,21 @@ const {
     recordSubtitleTranslation,
 } = require("./lib/metrics");
 const { getPublicBaseUrl } = require("./lib/public-url");
-const { composeVtt, parseSubtitleCues } = require("./lib/subtitle-parser");
+const { composeVtt, cueTextForTranslation, parseSubtitleCues } = require("./lib/subtitle-parser");
 const { searchPublicStremioOpenSubtitles } = require("./lib/stremio-subtitles");
 const { translateCues, translationProvider } = require("./lib/translator");
 
 const RESULT_LIMIT = Number(process.env.SUBTITLE_RESULT_LIMIT || 3);
 const GENERATED_SUBTITLE_CACHE_CONTROL = "public, max-age=86400";
 const DIAGNOSTIC_SUBTITLE_CACHE_CONTROL = "no-store";
+// Số mili-giây đầu phim cần dịch xong TRƯỚC KHI bắt đầu phát bản dịch dở dang cho người xem —
+// đủ để người xem không thấy phụ đề tiếng Anh (chưa dịch) ngay từ phút đầu, nhưng không phải đợi
+// dịch hết cả phim mới xem được. Phần sau ngưỡng này vẫn tiếp tục dịch ngầm; cues chưa dịch tới
+// sẽ tạm hiện nguyên văn ngôn ngữ gốc (composeVtt tự làm việc này) cho tới khi dịch xong.
+const PARTIAL_SUBTITLE_WARMUP_MS = Number(process.env.SUBTITLE_WARMUP_MS || 60000);
+// Bản dịch dở dang thay đổi liên tục nên KHÔNG được cache ở trình phát/CDN — luôn phải hỏi lại
+// server để lấy bản mới nhất (cho tới khi dịch xong hẳn mới chuyển sang GENERATED_SUBTITLE_CACHE_CONTROL).
+const PARTIAL_SUBTITLE_CACHE_CONTROL = "no-store";
 const JOB_MAX = 1000;
 const JOB_TTL_SECONDS = 24 * 60 * 60;
 
@@ -290,15 +298,54 @@ async function getGeneratedSubtitleResponse(key) {
     // vẫn tiếp tục chạy ngầm phía sau nhờ job.promise đã được kích hoạt phía trên, không phụ
     // thuộc việc có ai await nó hay không). Người xem tắt/bật lại phụ đề sau vài chục giây sẽ gọi
     // lại đúng key này — lúc đó cache đã có, trả về ngay lập tức không cần dịch lại.
+    // Nếu đã dịch xong đủ phần "phút đầu" (job.cues/job.translated được buildTranslatedVtt cập
+    // nhật dần qua callback tiến độ), phát NGAY bản VTT dở dang thay vì bắt người xem chờ dịch
+    // hết cả phim — phần chưa dịch tới sẽ tự hiện nguyên văn ngôn ngữ gốc (composeVtt lo việc
+    // này) cho tới khi dịch xong, người xem tắt/bật lại phụ đề sẽ thấy phần đã dịch nhiều hơn.
+    if (isWarmupSegmentTranslated(job)) {
+        const vtt = composeVtt(job.cues, job.translated);
+        logGeneratedSubtitleServed({ diagnostic: false, key, source: "partial", startedAt, vtt });
+        return { cacheControl: PARTIAL_SUBTITLE_CACHE_CONTROL, diagnostic: false, vtt };
+    }
+
     return translatingGeneratedSubtitleResponse({ job, key, startedAt });
+}
+
+// "Phút đầu" đã dịch xong khi: mọi cue có mốc thời gian bắt đầu <= PARTIAL_SUBTITLE_WARMUP_MS
+// và CÓ nội dung cần dịch (cueTextForTranslation khác rỗng — có cue chỉ là ký hiệu/trắng thì bỏ
+// qua, không tính) đều đã có bản dịch trong job.translated.
+function isWarmupSegmentTranslated(job) {
+    if (!job.cues || !job.translated) return false;
+
+    for (let index = 0; index < job.cues.length; index += 1) {
+        const cue = job.cues[index];
+        if (cue.start > PARTIAL_SUBTITLE_WARMUP_MS) break; // cues đã theo đúng thứ tự thời gian
+        if (cueTextForTranslation(cue) && !job.translated[index]) return false;
+    }
+
+    return true;
 }
 
 function translatingGeneratedSubtitleResponse({ job, key, startedAt }) {
     const elapsedSeconds = job.startedAt ? Math.max(0, Math.round((Date.now() - job.startedAt) / 1000)) : 0;
-    const message =
-        elapsedSeconds > 0
-            ? `Đang dịch... đã chờ khoảng ${elapsedSeconds} giây. Vui lòng tắt và bật lại phụ đề sau ít phút.`
-            : "Đang dịch... Vui lòng tắt và bật lại phụ đề sau ít phút.";
+
+    let message;
+    if (job.progress && job.progress.totalBatches > 0) {
+        const percent = Math.round((job.progress.completedBatches / job.progress.totalBatches) * 100);
+        const stuckAtZero = percent === 0 && elapsedSeconds >= 30;
+        // Tiến độ = 0% có 2 khả năng rất khác nhau: (a) vừa mới bắt đầu, bình thường, hoặc
+        // (b) đã chờ khá lâu mà vẫn 0% — nhiều khả năng các nguồn AI free đang quá tải đồng loạt
+        // (đúng thứ đang xảy ra khi hạn mức Gemini/Groq/Mistral cạn cùng lúc). Nói thẳng trường
+        // hợp (b) ra thay vì để người xem cứ tưởng "sắp xong tới nơi".
+        message = stuckAtZero
+            ? `Đang dịch... các nguồn AI miễn phí đang quá tải, đã chờ ${elapsedSeconds}s vẫn chưa xong phần nào (0/${job.progress.totalBatches}). Có thể mất vài phút hoặc lâu hơn — cứ tắt/bật lại phụ đề để kiểm tra.`
+            : `Đang dịch... đã xong ${percent}% (${job.progress.completedBatches}/${job.progress.totalBatches} phần). Vui lòng tắt và bật lại phụ đề sau ít phút.`;
+    } else if (elapsedSeconds > 0) {
+        message = `Đang dịch... đã chờ khoảng ${elapsedSeconds} giây. Vui lòng tắt và bật lại phụ đề sau ít phút.`;
+    } else {
+        message = "Đang dịch... Vui lòng tắt và bật lại phụ đề sau ít phút.";
+    }
+
     const vtt = composeDiagnosticVtt({ title: "Đang dịch phụ đề bằng AI", message });
     logGeneratedSubtitleServed({ diagnostic: true, key, source: "translating", startedAt, vtt });
 
@@ -337,6 +384,7 @@ async function buildTranslatedVtt(job) {
     const subtitleText = await fetchText(job.subtitleUrl);
     const cues = parseSubtitleCues(subtitleText);
     if (!cues.length) throw new Error(`No subtitle cues found for ${job.title}`);
+    job.cues = cues; // để getGeneratedSubtitleResponse dựng bản VTT dở dang khi cần
 
     logger.info("subtitle translation started", {
         cueCount: cues.length,
@@ -347,7 +395,13 @@ async function buildTranslatedVtt(job) {
     });
 
     try {
-        const translations = await translateCues(cues, config, GEMINI_API_KEYS);
+        const translations = await translateCues(cues, config, GEMINI_API_KEYS, (completedBatches, totalBatches, translatedSoFar) => {
+            // Ghi tiến độ + GIỮ LUÔN tham chiếu mảng đang dịch dở — mảng này được translateCues
+            // tự điền dần vào đúng vị trí (không tạo mảng mới mỗi lần), nên job.translated luôn
+            // phản ánh trạng thái MỚI NHẤT dù ta chỉ gán tham chiếu 1 lần.
+            job.progress = { completedBatches, totalBatches };
+            job.translated = translatedSoFar;
+        });
         const vtt = composeVtt(cues, translations);
 
         recordSubtitleTranslation({
