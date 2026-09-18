@@ -254,8 +254,8 @@ async function getGeneratedSubtitleResponse(key) {
         });
     }
 
-    const source = job.promise ? "joined" : "build";
     if (!job.promise) {
+        job.startedAt = Date.now();
         logger.info("generated subtitle build queued", { key });
         recordGeneratedSubtitleCache("miss");
         job.promise = buildTranslatedVtt(job)
@@ -274,25 +274,37 @@ async function getGeneratedSubtitleResponse(key) {
                 logger.error("generated subtitle build failed", { error, key });
                 throw error;
             });
+        // Không còn ai await job.promise ở luồng response nữa (xem giải thích bên dưới) — nếu
+        // job.promise reject mà không có consumer nào bắt, Node coi là "unhandled rejection" và
+        // CÓ THỂ LÀM CRASH CẢ SERVER (mặc định từ Node 15+). Lỗi thật đã được log ở .catch() ngay
+        // trên; dòng này chỉ để đánh dấu rejection là "đã xử lý", không làm gì thêm.
+        job.promise.catch(() => {});
     } else {
         logger.debug("generated subtitle build joined", { key });
         recordGeneratedSubtitleCache("joined");
     }
 
-    try {
-        const vtt = await job.promise;
-        logGeneratedSubtitleServed({ key, source, startedAt, vtt });
-        return generatedSubtitleResponse(vtt);
-    } catch (error) {
-        return diagnosticGeneratedSubtitleResponse({
-            error,
-            key,
-            message: "Could not generate translated subtitles for this video.",
-            source: "error",
-            startedAt,
-        });
-    }
+    // KHÔNG await job.promise ở đây nữa: bản dịch AI (Gemini/Groq/Mistral xoay vòng, có thể mất
+    // 30-90s khi phải dò nhiều model) khiến Stremio treo cả phút chờ 1 response HTTP — trải
+    // nghiệm y hệt "không load được sub". Thay vào đó, trả về NGAY một bản VTT "đang dịch" (job
+    // vẫn tiếp tục chạy ngầm phía sau nhờ job.promise đã được kích hoạt phía trên, không phụ
+    // thuộc việc có ai await nó hay không). Người xem tắt/bật lại phụ đề sau vài chục giây sẽ gọi
+    // lại đúng key này — lúc đó cache đã có, trả về ngay lập tức không cần dịch lại.
+    return translatingGeneratedSubtitleResponse({ job, key, startedAt });
 }
+
+function translatingGeneratedSubtitleResponse({ job, key, startedAt }) {
+    const elapsedSeconds = job.startedAt ? Math.max(0, Math.round((Date.now() - job.startedAt) / 1000)) : 0;
+    const message =
+        elapsedSeconds > 0
+            ? `Đang dịch... đã chờ khoảng ${elapsedSeconds} giây. Vui lòng tắt và bật lại phụ đề sau ít phút.`
+            : "Đang dịch... Vui lòng tắt và bật lại phụ đề sau ít phút.";
+    const vtt = composeDiagnosticVtt({ title: "Đang dịch phụ đề bằng AI", message });
+    logGeneratedSubtitleServed({ diagnostic: true, key, source: "translating", startedAt, vtt });
+
+    return { cacheControl: DIAGNOSTIC_SUBTITLE_CACHE_CONTROL, diagnostic: true, vtt };
+}
+
 
 function generatedSubtitleResponse(vtt) {
     return { cacheControl: GENERATED_SUBTITLE_CACHE_CONTROL, diagnostic: false, vtt };
